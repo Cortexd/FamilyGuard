@@ -1,0 +1,7 @@
+services:
+  notifier:
+    build: .
+    environment:
+      TELEGRAM_TOKEN: "YOUR_TELEGRAM_BOT_TOKEN"
+      EMAIL_ADDRESS: "YOUR_EMAIL@gmail.com"
+      EMAIL_PASSWORD: "YOUR_EMAIL_PASSWORD"

@@ -4,8 +4,10 @@ import smtplib
 import sqlite3
 from telegram import Bot
 from telegram.ext import Updater, CommandHandler
+from dotenv import load_dotenv
 
 # Configuration
+load_dotenv()  # Charge les variables d'environnement à partir du fichier .env
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
