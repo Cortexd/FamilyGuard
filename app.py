@@ -1,6 +1,7 @@
 import os
 import logging
 import time
+import locale
 import smtplib
 import sqlite3
 from datetime import datetime, timedelta
@@ -18,6 +19,9 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Configurer la locale
+locale.setlocale(locale.LC_TIME, 'fr_FR.UTF-8')  # Pour Linux
 
 # Configuration
 load_dotenv()
@@ -37,6 +41,7 @@ DAYS_ACTIVE = 1  # Nombre de jours par défaut pour le mode "activé"
 notification_times = ['09:00', '10:00', '12:00', '19:00', 
                       '19:01', '19:02', '19:03', '19:04', 
                       '19:05', '19:06']  # Heures de notification
+EXPIRATION_DATE = datetime.now()
 
 # Setup de la base de données
 def setup_database():
@@ -89,15 +94,26 @@ def start(update, context):
 
 # Fonction pour gérer le nombre de jours choisi
 def receive_days(update, context):
-    global DAYS_ACTIVE, MODE
+    global DAYS_ACTIVE, MODE, EXPIRATION_DATE
     logger.info(f"User entered number of days: {update.message.text}")
     
     if update.message.text.isdigit():
         DAYS_ACTIVE = int(update.message.text)
-        if 1 <= DAYS_ACTIVE <= 10:
+        if 0 <= DAYS_ACTIVE <= 10:
+            # Date d'alerte initiale
+            # Obtenir la première heure de la liste de notifications
+            first_notification_time = notification_times[0]  # '09:00'
+            # Extraire l'heure et les minutes
+            hour, minute = map(int, first_notification_time.split(':'))
+            # Créer l'objet datetime pour l'expiration avec la première heure
+            EXPIRATION_DATE = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=DAYS_ACTIVE)
             MODE = "active"
-            update.message.reply_text(f"Mode activé pour {DAYS_ACTIVE} jours.")
+            update.message.reply_text(
+                    f"Mode activé pour *{DAYS_ACTIVE}* jours.\n"
+                    f"Date de 1ere alerte *{EXPIRATION_DATE}*."
+                    )
             logger.info(f"Notifications activated for {DAYS_ACTIVE} days.")
+            logger.info(f"Date de 1ere alerte {EXPIRATION_DATE}")
             return ConversationHandler.END
         else:
             update.message.reply_text("Veuillez entrer un nombre de jours entre 1 et 10.")
@@ -117,10 +133,12 @@ def stop(update, context):
 # Fonction pour envoyer un message d'info
 # TODO : Ajouter en mode start les infos de délais : premiere alerte le ...
 def info_message(update, context):
+    formatted_expiration_date = EXPIRATION_DATE.strftime("%A %d %B %H:%M")
     message = (
         f"Fonctionnement de l'application :\n"
         f"Mode actuel *{MODE}* {'🛑' if MODE == 'arret' else '✅'}.\n"
         f"Nombre de jours spécifié : *{DAYS_ACTIVE}* jours.\n"
+        f"Alerte prévue le : *{formatted_expiration_date}*.\n"
         f"Raccourcis /start /stop /info."
     )
     send_telegram_message(update.message.chat_id, message)
@@ -148,16 +166,17 @@ def check_notifications():
 
         # Vérifier si c'est l'heure d'envoyer un message
         if notification_hour in notification_times:
-            send_telegram_message(YOUR_CHAT_ID, "Tout va bien? Répondez avec /stop si tout va bien.")
+            if current_time >= EXPIRATION_DATE:
+                send_telegram_message(YOUR_CHAT_ID, "Tout va bien? Répondez avec /stop si tout va bien.")
 
-            # Si réponse non reçue, vérifier et envoyer l'email
-            cursor.execute("SELECT responded FROM responses WHERE id = 1")  # Assume id = 1
-            response_state = cursor.fetchone()
+                # Si réponse non reçue, vérifier et envoyer l'email
+                cursor.execute("SELECT responded FROM responses WHERE id = 1")  # Assume id = 1
+                response_state = cursor.fetchone()
 
-            if response_state and response_state[0] == 0:
-                logger.info("No response received. Checking if email must be sent.")
-                if current_time.hour == 20:
-                    send_email(RECEIVER_EMAIL_ADDRESS, "Pas de réponse reçue", "Aucune réponse n'a été reçue concernant votre état.")
+                if response_state and response_state[0] == 0:
+                    logger.info("No response received. Checking if email must be sent.")
+                    if current_time.hour == 20:
+                        send_email(RECEIVER_EMAIL_ADDRESS, "Pas de réponse reçue", "Aucune réponse n'a été reçue concernant votre état.")
 
     conn.commit()
     conn.close()
