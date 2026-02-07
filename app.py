@@ -3,7 +3,6 @@ import logging
 import time
 import locale
 import smtplib
-import sqlite3
 from datetime import datetime, timedelta
 from telegram import Bot
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
@@ -30,7 +29,7 @@ RECEIVER_EMAIL_ADDRESS = os.getenv("RECEIVER_EMAIL_ADDRESS")
 SENDER_EMAIL_ADDRESS = os.getenv("SENDER_EMAIL_ADDRESS")
 SENDER_EMAIL_PASSWORD = os.getenv("SENDER_EMAIL_PASSWORD")
 YOUR_CHAT_ID = os.getenv("YOUR_CHAT_ID")
-NOTIFICATION_INTERVAL = 3600  # 1 heure entre les notifications
+CHECK_NOTIFICATION_INTERVAL = 5  # en seconde
 
 # États de la conversation
 CHOOSING, TYPING_REPLY = range(2)
@@ -38,26 +37,12 @@ CHOOSING, TYPING_REPLY = range(2)
 # Mode de fonctionnement
 MODE = "arret"
 DAYS_ACTIVE = 1  # Nombre de jours par défaut pour le mode "activé"
-notification_times = ['09:00', '10:00', '12:00', '19:00', 
-                      '19:01', '19:02', '19:03', '19:04', 
-                      '19:05', '19:06']  # Heures de notification
-EXPIRATION_DATE = datetime.now()
-
-# Setup de la base de données
-def setup_database():
-    logger.info("Setting up the database...")
-    conn = sqlite3.connect('notifications.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS responses (
-            id INTEGER PRIMARY KEY,
-            responded INTEGER DEFAULT 0,
-            last_notified DATETIME
-        )
-    ''')
-    conn.commit()
-    conn.close()
-    logger.info("Database setup completed.")
+# notification_times = ['09:00', '10:00', '12:00', '19:00', 
+#                       '19:01', '19:02', '19:03', '19:04', 
+#                       '19:05', '19:06']  # Heures de notification
+notification_times = ['12:28', '12:29', '12:30'] 
+NOTIFICATION_INDEX = 0
+EXPIRATION_DATE:datetime = datetime.now()
 
 # Fonction pour envoyer un message Telegram
 def send_telegram_message(chat_id, message):
@@ -92,6 +77,18 @@ def start(update, context):
     )
     return CHOOSING
 
+# Récuperation de la nouvelle heure.
+def GetNotificationDate(index, date:datetime):
+    logger.info(f"Préparation index {notification_times[index] }")
+    # Obtenir la première heure de la liste de notifications
+    selected_notification_time = notification_times[index]  
+    logger.info(f"selected_notification_time {selected_notification_time}")
+    # Extraire l'heure et les minutes
+    hour, minute = map(int, selected_notification_time.split(':'))
+    logger.info(f"xtraire l'heure et les minutes {hour}h et {minute} min")
+    # Créer l'objet datetime pour l'expiration avec la première heure
+    return date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
 # Fonction pour gérer le nombre de jours choisi
 def receive_days(update, context):
     global DAYS_ACTIVE, MODE, EXPIRATION_DATE
@@ -101,12 +98,8 @@ def receive_days(update, context):
         DAYS_ACTIVE = int(update.message.text)
         if 0 <= DAYS_ACTIVE <= 10:
             # Date d'alerte initiale
-            # Obtenir la première heure de la liste de notifications
-            first_notification_time = notification_times[0]  # '09:00'
-            # Extraire l'heure et les minutes
-            hour, minute = map(int, first_notification_time.split(':'))
-            # Créer l'objet datetime pour l'expiration avec la première heure
-            EXPIRATION_DATE = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=DAYS_ACTIVE)
+            EXPIRATION_DATE = datetime.now() + timedelta(days=DAYS_ACTIVE)
+            EXPIRATION_DATE = GetNotificationDate(0, EXPIRATION_DATE)
             MODE = "active"
             update.message.reply_text(
                     f"Mode activé pour *{DAYS_ACTIVE}* jours.\n"
@@ -123,15 +116,16 @@ def receive_days(update, context):
 
 # Commande pour stopper les notifications
 def stop(update, context):
-    global MODE
+    global MODE, NOTIFICATION_INDEX, DAYS_ACTIVE, EXPIRATION_DATE
     MODE = "arret"
+    NOTIFICATION_INDEX=0
+    DAYS_ACTIVE=1
+    EXPIRATION_DATE = datetime.now()
     logger.info("Stopping notifications.")
     update.message.reply_text("Mode arrêté. Vous ne recevrez plus de notifications.\n Raccourcis /start /stop /info.")
     return ConversationHandler.END
 
-
 # Fonction pour envoyer un message d'info
-# TODO : Ajouter en mode start les infos de délais : premiere alerte le ...
 def info_message(update, context):
     formatted_expiration_date = EXPIRATION_DATE.strftime("%A %d %B %H:%M")
     message = (
@@ -143,7 +137,7 @@ def info_message(update, context):
     )
     send_telegram_message(update.message.chat_id, message)
 
-# Fonction pour envoyer un message de démarrage
+# Fonction pour envoyer un message de démarrageq
 def welcome_message(chat_id):
     message = (
         f"Fonctionnement de l'application :\n"
@@ -155,36 +149,34 @@ def welcome_message(chat_id):
 
 # Fonction pour vérifier les notifications
 def check_notifications():
-    conn = sqlite3.connect('notifications.db')
-    cursor = conn.cursor()
-
+    global NOTIFICATION_INDEX, EXPIRATION_DATE
     # Envoyer des messages si en mode "actif"
     if MODE == "active":
         current_time = datetime.now()
-        notification_hour = current_time.strftime("%H:%M")
-        logger.info(f"Checking notifications at {notification_hour}")
+        #current_time = datetime.now().replace(second=0, microsecond=0)
+        logger.info(f"Checking notifications at {current_time} vs {EXPIRATION_DATE}")
 
         # Vérifier si c'est l'heure d'envoyer un message
-        if notification_hour in notification_times:
-            if current_time >= EXPIRATION_DATE:
+        if current_time >= EXPIRATION_DATE:
+            logger.info(f"Oui {current_time}>={EXPIRATION_DATE}")
+            # Si c'est le moment d'eenvoyer le mail
+            if NOTIFICATION_INDEX == len(notification_times) - 1:
+                logger.info(f"Pas de réponse et dernier index {EXPIRATION_DATE}")
+                send_email(RECEIVER_EMAIL_ADDRESS, "Pas de réponse reçue", "Aucune réponse n'a été reçue concernant votre état.")
+            else:
+                logger.info(f"Relance normale {EXPIRATION_DATE}")
+                # sinon on relance pour savoir si çà va ?
                 send_telegram_message(YOUR_CHAT_ID, "Tout va bien? Répondez avec /stop si tout va bien.")
+                # on change de date pour la prochaine alerte
+                NOTIFICATION_INDEX = NOTIFICATION_INDEX + 1
+                EXPIRATION_DATE = GetNotificationDate(NOTIFICATION_INDEX, EXPIRATION_DATE)
+                logger.info(f"Prochaine relance {EXPIRATION_DATE}")
+  
 
-                # Si réponse non reçue, vérifier et envoyer l'email
-                cursor.execute("SELECT responded FROM responses WHERE id = 1")  # Assume id = 1
-                response_state = cursor.fetchone()
-
-                if response_state and response_state[0] == 0:
-                    logger.info("No response received. Checking if email must be sent.")
-                    if current_time.hour == 20:
-                        send_email(RECEIVER_EMAIL_ADDRESS, "Pas de réponse reçue", "Aucune réponse n'a été reçue concernant votre état.")
-
-    conn.commit()
-    conn.close()
 
 # Boucle principale de l'application
 def main():
     logger.info("Starting the application...")
-    setup_database()
     
     # Gestion télégram
     updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
@@ -205,7 +197,7 @@ def main():
 
     while True:
         check_notifications()
-        time.sleep(NOTIFICATION_INTERVAL)
+        time.sleep(CHECK_NOTIFICATION_INTERVAL)
 
 if __name__ == '__main__':
     main()

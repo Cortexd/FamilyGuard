@@ -13,6 +13,13 @@ ENV LANG=fr_FR.UTF-8
 ENV LANGUAGE=fr_FR.UTF-8
 ENV LC_ALL=fr_FR.UTF-8
 
+# Installer le fuseau horaire
+RUN apt-get install -y tzdata
+
+# Configurer le fuseau horaire
+ENV TZ=Europe/Paris  
+RUN dpkg-reconfigure -f noninteractive tzdata
+
 WORKDIR /app
 
 COPY requirements.txt .
